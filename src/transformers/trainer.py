@@ -317,6 +317,8 @@ class Trainer:
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
     ):
+        self.gradients = [[0.] * 7] * len(model.model.layers)
+        self.num_steps = 0
         if args is None:
             output_dir = "tmp_trainer"
             logger.info(f"No `TrainingArguments` passed, using `output_dir={output_dir}`.")
@@ -672,6 +674,9 @@ class Trainer:
         # torch.compile
         if args.torch_compile and not is_torch_compile_available():
             raise RuntimeError("Using torch.compile requires a nightly install of PyTorch.")
+
+    def get_all_gradients(self):
+        return [[float(x) / self.num_steps for x in y] for y in self.gradients]
 
     def add_callback(self, callback):
         """
@@ -1963,6 +1968,34 @@ class Trainer:
 
                     if optimizer_was_run and not self.deepspeed:
                         self.lr_scheduler.step()
+
+                    if model.model.layers[0].self_attn.q_proj.weight.grad is not None:
+                        self.num_steps += 1
+                        gradients = []
+                        for i in range(len(model.model.layers)):
+                            qg = model.model.layers[i].self_attn.q_proj.weight.grad.flatten()
+                            kg = model.model.layers[i].self_attn.k_proj.weight.grad.flatten()
+                            vg = model.model.layers[i].self_attn.v_proj.weight.grad.flatten()
+                            og = model.model.layers[i].self_attn.o_proj.weight.grad.flatten()
+                            gate_g = model.model.layers[i].mlp.gate_proj.weight.grad.flatten()
+                            down_g = model.model.layers[i].mlp.down_proj.weight.grad.flatten()
+                            up_g = model.model.layers[i].mlp.up_proj.weight.grad.flatten()
+                            gradients = [
+                                qg.norm() / qg.numel(), 
+                                kg.norm() / kg.numel(), 
+                                vg.norm() / vg.numel(), 
+                                og.norm() / og.numel(), 
+                                gate_g.norm() / gate_g.numel(), 
+                                down_g.norm() / down_g.numel(), 
+                                up_g.norm() / up_g.numel(),
+                            ]
+
+                            for k, val in enumerate(gradients):
+                                self.gradients[i][k] += val
+                       
+                        print(self.get_all_gradients())
+                    else:
+                        print("grad None")
 
                     model.zero_grad()
                     self.state.global_step += 1
