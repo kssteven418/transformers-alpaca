@@ -2252,22 +2252,23 @@ class Trainer:
 
             self.log(logs)
 
-        metrics = None
-        if self.control.should_evaluate:
-            if isinstance(self.eval_dataset, dict):
-                for eval_dataset_name, eval_dataset in self.eval_dataset.items():
-                    metrics = self.evaluate(
-                        eval_dataset=eval_dataset,
-                        ignore_keys=ignore_keys_for_eval,
-                        metric_key_prefix=f"eval_{eval_dataset_name}",
-                    )
-            else:
-                metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
-            self._report_to_hp_search(trial, self.state.global_step, metrics)
+        # Do not need to evaluate or save for computing fisher
+        #metrics = None
+        #if self.control.should_evaluate:
+        #    if isinstance(self.eval_dataset, dict):
+        #        for eval_dataset_name, eval_dataset in self.eval_dataset.items():
+        #            metrics = self.evaluate(
+        #                eval_dataset=eval_dataset,
+        #                ignore_keys=ignore_keys_for_eval,
+        #                metric_key_prefix=f"eval_{eval_dataset_name}",
+        #            )
+        #    else:
+        #        metrics = self.evaluate(ignore_keys=ignore_keys_for_eval)
+        #    self._report_to_hp_search(trial, self.state.global_step, metrics)
 
-        if self.control.should_save:
-            self._save_checkpoint(model, trial, metrics=metrics)
-            self.control = self.callback_handler.on_save(self.args, self.state, self.control)
+        #if self.control.should_save:
+        #    self._save_checkpoint(model, trial, metrics=metrics)
+        #    self.control = self.callback_handler.on_save(self.args, self.state, self.control)
 
     def _load_rng_state(self, checkpoint):
         # Load RNG states from `checkpoint`
