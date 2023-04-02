@@ -31,6 +31,7 @@ import warnings
 from collections.abc import Mapping
 from distutils.util import strtobool
 from pathlib import Path
+import pickle
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 from tqdm.auto import tqdm
@@ -318,6 +319,7 @@ class Trainer:
         preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
     ):
         self.gradients = np.zeros([len(model.model.layers), 7])
+        self.all_gradients = []
         self.num_steps = 0
         if args is None:
             output_dir = "tmp_trainer"
@@ -1976,7 +1978,7 @@ class Trainer:
 
                     if model.model.layers[0].self_attn.q_proj.weight.grad is not None:
                         self.num_steps += 1
-                        gradients = []
+                        all_gradients = []
                         for i, layer in enumerate(model.model.layers):
                             qg = layer.self_attn.q_proj.weight.grad.flatten()
                             kg = layer.self_attn.k_proj.weight.grad.flatten()
@@ -1996,9 +1998,15 @@ class Trainer:
                             ]
 
                             self.gradients[i] += gradients
-                        print(self.get_all_gradients())
+                            all_gradients.append(gradients)
+                        self.all_gradients.append(all_gradients)
                     else:
                         print("grad None")
+
+                    if (self.num_steps + 1) % 1000 == 0:
+                        with open(f"stats_{self.num_steps}.pkl", "wb") as f:
+                            pickle.dump(self.all_gradients, f)
+                        print(self.get_all_gradients())
 
                     model.zero_grad()
                     self.state.global_step += 1
