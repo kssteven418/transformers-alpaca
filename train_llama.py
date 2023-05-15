@@ -4,10 +4,12 @@ from dataclasses import dataclass, field
 from typing import Optional, Dict, Sequence
 
 import torch
+import torch.optim as optim
 import transformers
 from torch.utils.data import Dataset
 from transformers import Trainer
 
+from tqdm import tqdm
 import utils
 
 IGNORE_INDEX = -100
@@ -191,21 +193,71 @@ def train():
     config.hidden_states = 512
     config.intermediate_size = 2048
 
-    #model = transformers.AutoModelForCausalLM.from_pretrained(
-    #    model_args.model_name_or_path,
-    #    cache_dir=training_args.cache_dir,
-    #)
-    model = transformers.LLaMAForCausalLM(config)
-    print(model)
+    from datautils import get_loaders
+    dataloader, testloader = get_loaders('c4',  model=model_args.model_name_or_path, seqlen=512)
 
-    tokenizer = transformers.AutoTokenizer.from_pretrained(
+    #model = transformers.LLaMAForCausalLM(config)
+    model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
-        model_max_length=training_args.model_max_length,
-        padding_side="right",
-        use_fast=False,
     )
+    model = model.cuda().bfloat16()
 
+    optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
+    
+    grads = [[0.] * 7 for _ in model.model.layers]
+
+    for data in tqdm(dataloader):
+        x = data[0].cuda()
+        outputs = model(input_ids=x, labels=x)
+        loss = outputs.loss
+        loss.backward()
+
+        for i, layer in enumerate(model.model.layers):
+            for j, module in enumerate(
+                [
+                    layer.self_attn.q_proj,
+                    layer.self_attn.k_proj,
+                    layer.self_attn.v_proj,
+                    layer.self_attn.o_proj,
+                    layer.mlp.gate_proj,
+                    layer.mlp.up_proj,
+                    layer.mlp.down_proj,
+                ]
+            ):
+                grad = module.weight.grad
+                # For norm
+                #grads[i][j] += float((grad ** 2).mean())
+                grads[i][j] += (grad ** 2).float().cpu()
+
+        optimizer.zero_grad()
+        #import pdb; pdb.set_trace()
+
+    for i, layer in enumerate(model.model.layers):
+        for j, module in enumerate(
+            [
+                layer.self_attn.q_proj,
+                layer.self_attn.k_proj,
+                layer.self_attn.v_proj,
+                layer.self_attn.o_proj,
+                layer.mlp.gate_proj,
+                layer.mlp.up_proj,
+                layer.mlp.down_proj,
+            ]
+        ):
+            module.weight.data = grads[i][j]
+
+    #tokenizer = transformers.AutoTokenizer.from_pretrained(
+    #    model_args.model_name_or_path,
+    #    cache_dir=training_args.cache_dir,
+    #    model_max_length=training_args.model_max_length,
+    #    padding_side="right",
+    #    use_fast=False,
+    #)
+
+    import pdb; pdb.set_trace()
+
+    """
     if tokenizer.pad_token is None:
         smart_tokenizer_and_embedding_resize(
             special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
@@ -228,6 +280,7 @@ def train():
     # trainer.evaluate()
     trainer.save_state()
     safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
+    """
 
 
 if __name__ == "__main__":
