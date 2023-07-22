@@ -184,13 +184,33 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
 
 
-def get_modules(layer, is_falcon):
+def get_modules(layer, is_falcon, is_opt, is_mpt):
     if is_falcon:
         return [
-            layer.self_attention.query_key_value, 
+            layer.self_attention.query, 
+            layer.self_attention.key, 
+            layer.self_attention.value, 
             layer.self_attention.dense, 
             layer.mlp.dense_h_to_4h,
             layer.mlp.dense_4h_to_h,
+        ]
+    elif is_opt:
+        return[
+            layer.self_attn.q_proj,
+            layer.self_attn.k_proj,
+            layer.self_attn.v_proj,
+            layer.self_attn.out_proj,
+            layer.fc1,
+            layer.fc2,
+        ]
+    elif is_mpt:
+        return [
+            layer.attn.Wq,
+            layer.attn.Wk,
+            layer.attn.Wv,
+            layer.attn.out_proj,
+            layer.ffn.up_proj,
+            layer.ffn.down_proj,
         ]
     else:
         # Llama, vicuna, etc.
@@ -214,18 +234,18 @@ def train():
     config.hidden_states = 512
     config.intermediate_size = 2048
 
-    #run_vicuna = False
-    #from datautils import get_loaders
-    #DATASET = 'c4'
-    #print(DATASET)
-    #dataloader, testloader = get_loaders(DATASET,  model=model_args.model_name_or_path, seqlen=512)
+    run_vicuna = False
+    from datautils import get_loaders
+    DATASET = 'c4'
+    print(DATASET)
+    dataloader, testloader = get_loaders(DATASET,  model=model_args.model_name_or_path, seqlen=512)
 
     # for vicuna
-    run_vicuna = True
-    print("using vicuna dataset")
-    import pickle
-    with open('vicuna_data_input_ids.pkl', 'rb') as f:
-        dataloader = pickle.load(f)
+    #run_vicuna = True
+    #print("using vicuna dataset")
+    #import pickle
+    #with open('vicuna_data_input_ids.pkl', 'rb') as f:
+    #    dataloader = pickle.load(f)
 
     #model = transformers.LLaMAForCausalLM(config)
     print(training_args.cache_dir)
@@ -234,24 +254,50 @@ def train():
         cache_dir=training_args.cache_dir,
         trust_remote_code=True,
     )
+    import pdb; pdb.set_trace()
     #model = model.cuda().bfloat16()
     model = model.bfloat16()
-    model.lm_head.cuda()
+    #model = model.float()
+    try:
+        model.lm_head.cuda()
+    except:
+        pass
 
     is_falcon = 'falcon' in model_args.model_name_or_path
-    _model = model.transformer if is_falcon else model.model
-    _layers = _model.h if is_falcon else _model.layers
-    _model.split(3) # split into n+1 machines
+    is_opt = 'opt' in model_args.model_name_or_path
+    is_mpt = 'mpt' in model_args.model_name_or_path
+
+    if is_falcon:
+        _model = model.transformer
+        _layers = _model.h
+    elif is_opt:
+        _model = model.model.decoder
+        _layers = _model.layers
+    elif is_mpt:
+        _model = model.transformer
+        _layers = _model.blocks
+    else:
+        _model = model.model
+        _layers = _model.layers
+
+    _model.split(2) # split into n+1 machines
+    #model.cuda()  # use it for not splitting
 
     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
     
 
     if is_falcon:
-        grads = [[0.] * 4 for _ in _layers]
+        grads = [[0.] * 6 for _ in _layers]
+    elif is_opt:
+        grads = [[0.] * 6 for _ in _layers]
+    elif is_mpt:
+        grads = [[0.] * 6 for _ in _layers]
     else:
         grads = [[0.] * 7 for _ in _layers]
 
-    for data in tqdm(dataloader[:100]):
+    for i, data in tqdm(enumerate(dataloader[:100])):
+        #if i < 50:
+        #    continue
         #import pdb; pdb.set_trace()
         if not run_vicuna:
             data = data[0]
@@ -263,9 +309,10 @@ def train():
         loss.backward()
 
         for i, layer in enumerate(_layers):
-            for j, module in enumerate(get_modules(layer, is_falcon)):
+            for j, module in enumerate(get_modules(layer, is_falcon, is_opt, is_mpt)):
                 grad = module.weight.grad
                 #print(i, j, grad.norm())
+                #import pdb; pdb.set_trace()
                 # For norm
                 #grads[i][j] += float((grad ** 2).mean())
                 grads[i][j] += (grad ** 2).float().cpu()
@@ -274,7 +321,7 @@ def train():
         #import pdb; pdb.set_trace()
 
     for i, layer in enumerate(_layers):
-        for j, module in enumerate(get_modules(layer, is_falcon)):
+        for j, module in enumerate(get_modules(layer, is_falcon, is_opt, is_mpt)):
             module.weight.data = grads[i][j]
 
     #tokenizer = transformers.AutoTokenizer.from_pretrained(
@@ -285,15 +332,12 @@ def train():
     #    use_fast=False,
     #)
     try:
-        if run_vicuna:
-            model.save_pretrained(f"~/gradients_vicuna-40B")
-        else:
-            model.save_pretrained(f"~/gradients_{DATASET}")
+        model.save_pretrained(f"./gradients-mpt-7b")
     except:
         print("error")
 
 
-    import pdb; pdb.set_trace()
+    #import pdb; pdb.set_trace()
 
     """
     if tokenizer.pad_token is None:

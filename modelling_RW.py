@@ -688,7 +688,6 @@ class RWModel(RWPreTrainedModel):
                 hidden_states = hidden_states.to("cuda:0")
                 attention_mask = attention_mask.to("cuda:0")
 
-
             if use_cache is True:
                 presents = presents + (outputs[1],)
 
