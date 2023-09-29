@@ -90,7 +90,6 @@ def get_c4(nsamples, seed, seqlen, model):
         inp = trainenc.input_ids[:, i:j]
         tar = inp.clone()
         tar[:, :-1] = -100
-        print(inp.shape, tar.shape)
         trainloader.append((inp, tar))
 
     import random
@@ -102,14 +101,12 @@ def get_c4(nsamples, seed, seqlen, model):
             tmp = tokenizer(valdata[i]['text'], return_tensors='pt')
             if tmp.input_ids.shape[1] >= seqlen:
                 break
-        print(tmp.input_ids.shape[1] - seqlen - 1)
         if tmp.input_ids.shape[1] - seqlen - 1 <= 0:
             i = 0
         else:
             i = random.randint(0, tmp.input_ids.shape[1] - seqlen - 1)
         j = i + seqlen
         valenc.append(tmp.input_ids[:, i:j])
-        print(tmp.input_ids[:, i:j].shape)
     valenc = torch.hstack(valenc)
     class TokenizerWrapper:
         def __init__(self, input_ids):
@@ -191,5 +188,4 @@ def get_loaders(
     if 'c4' in name:
         if 'new' in name:
             return get_c4_new(nsamples, seed, seqlen, model)
-        print(nsamples, seed, seqlen, model)
         return get_c4(nsamples, seed, seqlen, model)

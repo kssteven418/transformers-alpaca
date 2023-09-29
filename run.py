@@ -40,11 +40,15 @@ PROMPT_DICT_NEW={
 @dataclass
 class ModelArguments:
     model_name_or_path: Optional[str] = field(default="facebook/opt-125m")
+    #save_grad_path: str = field(
+    #    metadata={"help": "Path to save the gradients"}
+    #)
 
 
 @dataclass
 class DataArguments:
-    data_path: str = field(default=None, metadata={"help": "Path to the training data."})
+    dataset: str = field(default="c4")
+    num_examples: int = field(default=100, metadata={"help": "Number of calibration examples"})
 
 
 @dataclass
@@ -55,15 +59,6 @@ class TrainingArguments(transformers.TrainingArguments):
         default=512,
         metadata={"help": "Maximum sequence length. Sequences will be right padded (and possibly truncated)."},
     )
-
-
-def safe_save_model_for_hf_trainer(trainer: transformers.Trainer, output_dir: str):
-    """Collects the state dict and dump to disk."""
-    state_dict = trainer.model.state_dict()
-    if trainer.args.should_save:
-        cpu_state_dict = {key: value.cpu() for key, value in state_dict.items()}
-        del state_dict
-        trainer._save(output_dir, state_dict=cpu_state_dict)  # noqa
 
 
 def smart_tokenizer_and_embedding_resize(
@@ -202,20 +197,13 @@ def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
 
-    run_vicuna = False
-    from datautils import get_loaders
-    DATASET = 'c4'
-    print(DATASET)
-    dataloader, testloader = get_loaders(DATASET,  model=model_args.model_name_or_path, seqlen=512)
+    if data_args.dataset == "c4":
+        from datautils import get_loaders
+        print("Calibration with C4 ")
+        dataloader, testloader = get_loaders(data_args.dataset,  model=model_args.model_name_or_path, seqlen=512)
+    else:
+        raise NotImplementedError("Please define your own dataset here")
 
-    # for vicuna
-    #run_vicuna = True
-    #print("using vicuna dataset")
-    #import pickle
-    #with open('vicuna_data_input_ids.pkl', 'rb') as f:
-    #    dataloader = pickle.load(f)
-
-    print(training_args.cache_dir)
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
         cache_dir=training_args.cache_dir,
@@ -237,11 +225,8 @@ def train():
     
     grads = [[0.] * _model.num_linear_layers for _ in _layers]
 
-    for i, data in tqdm(enumerate(dataloader[:100])):
-        if not run_vicuna:
-            data = data[0]
-        else:
-            data = data.reshape(1, -1)
+    for i, data in tqdm(enumerate(dataloader[:data_args.num_examples])):
+        data = data[0]
         x = data.cuda()
         outputs = model(input_ids=x, labels=x)
         loss = outputs.loss
@@ -261,17 +246,8 @@ def train():
         for j, module in enumerate(get_modules(layer)):
             module.weight.data = grads[i][j]
 
-    #tokenizer = transformers.AutoTokenizer.from_pretrained(
-    #    model_args.model_name_or_path,
-    #    cache_dir=training_args.cache_dir,
-    #    model_max_length=training_args.model_max_length,
-    #    padding_side="right",
-    #    use_fast=False,
-    #)
-    try:
-        model.save_pretrained(f"./gradients-mpt-7b")
-    except:
-        print("error")
+    print(f"saving model gradient at {training_args.output_dir}")
+    model.save_pretrained(training_args.output_dir)
 
 
 if __name__ == "__main__":
