@@ -254,6 +254,9 @@ def train():
 
         optimizer.zero_grad()
 
+    # This is a hacky solution to save the gradients
+    # where we overwrite all the weights in the model as the gradients
+    # and use HF save_pretrained`
     for i, layer in enumerate(_layers):
         for j, module in enumerate(get_modules(layer)):
             module.weight.data = grads[i][j]
@@ -269,34 +272,6 @@ def train():
         model.save_pretrained(f"./gradients-mpt-7b")
     except:
         print("error")
-
-
-    #import pdb; pdb.set_trace()
-
-    """
-    if tokenizer.pad_token is None:
-        smart_tokenizer_and_embedding_resize(
-            special_tokens_dict=dict(pad_token=DEFAULT_PAD_TOKEN),
-            tokenizer=tokenizer,
-            model=model,
-        )
-    if "llama" in model_args.model_name_or_path:
-        tokenizer.add_special_tokens(
-            {
-                "eos_token": DEFAULT_EOS_TOKEN,
-                "bos_token": DEFAULT_BOS_TOKEN,
-                "unk_token": DEFAULT_UNK_TOKEN,
-            }
-        )
-
-    data_module = make_supervised_data_module(tokenizer=tokenizer, data_args=data_args)
-    # import ipdb;ipdb.set_trace()
-    trainer = Trainer(model=model, tokenizer=tokenizer, args=training_args, **data_module)
-    trainer.train()
-    # trainer.evaluate()
-    trainer.save_state()
-    safe_save_model_for_hf_trainer(trainer=trainer, output_dir=training_args.output_dir)
-    """
 
 
 if __name__ == "__main__":

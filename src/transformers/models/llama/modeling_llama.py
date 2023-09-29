@@ -497,7 +497,6 @@ class LLaMAModel(LLaMAPreTrainedModel):
                 layer.to(f"cuda:{device}")
                 prev_device = device
 
-
     def get_input_embeddings(self):
         return self.embed_tokens
 
@@ -627,7 +626,6 @@ class LLaMAModel(LLaMAPreTrainedModel):
 
         device = 0
         for idx, decoder_layer in enumerate(self.layers):
-            print(idx, device)
             if output_hidden_states:
                 all_hidden_states += (hidden_states,)
 
