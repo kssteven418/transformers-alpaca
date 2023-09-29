@@ -12,6 +12,10 @@ from transformers import Trainer
 from tqdm import tqdm
 import utils
 
+# NOTE: define number of layers in the model
+# for LLaMA, this is 7 for q, k, v, o, gate, up, and down
+NUM_LAYERS = 7
+
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
@@ -184,55 +188,23 @@ def make_supervised_data_module(tokenizer: transformers.PreTrainedTokenizer, dat
     return dict(train_dataset=train_dataset, eval_dataset=None, data_collator=data_collator)
 
 
-def get_modules(layer, is_falcon, is_opt, is_mpt):
-    if is_falcon:
-        return [
-            layer.self_attention.query, 
-            layer.self_attention.key, 
-            layer.self_attention.value, 
-            layer.self_attention.dense, 
-            layer.mlp.dense_h_to_4h,
-            layer.mlp.dense_4h_to_h,
-        ]
-    elif is_opt:
-        return[
-            layer.self_attn.q_proj,
-            layer.self_attn.k_proj,
-            layer.self_attn.v_proj,
-            layer.self_attn.out_proj,
-            layer.fc1,
-            layer.fc2,
-        ]
-    elif is_mpt:
-        return [
-            layer.attn.Wq,
-            layer.attn.Wk,
-            layer.attn.Wv,
-            layer.attn.out_proj,
-            layer.ffn.up_proj,
-            layer.ffn.down_proj,
-        ]
-    else:
-        # Llama, vicuna, etc.
-        return[
-            layer.self_attn.q_proj,
-            layer.self_attn.k_proj,
-            layer.self_attn.v_proj,
-            layer.self_attn.o_proj,
-            layer.mlp.gate_proj,
-            layer.mlp.up_proj,
-            layer.mlp.down_proj,
-        ]
+def get_modules(layer):
+    # NOTE: This is llama-specific
+    # For other models, replace this with proper names for all linear layers
+    return[
+        layer.self_attn.q_proj,
+        layer.self_attn.k_proj,
+        layer.self_attn.v_proj,
+        layer.self_attn.o_proj,
+        layer.mlp.gate_proj,
+        layer.mlp.up_proj,
+        layer.mlp.down_proj,
+    ]
 
 
 def train():
     parser = transformers.HfArgumentParser((ModelArguments, DataArguments, TrainingArguments))
     model_args, data_args, training_args = parser.parse_args_into_dataclasses()
-
-    config = transformers.LLaMAConfig()
-    config.num_hidden_layers = 4
-    config.hidden_states = 512
-    config.intermediate_size = 2048
 
     run_vicuna = False
     from datautils import get_loaders
@@ -247,7 +219,6 @@ def train():
     #with open('vicuna_data_input_ids.pkl', 'rb') as f:
     #    dataloader = pickle.load(f)
 
-    #model = transformers.LLaMAForCausalLM(config)
     print(training_args.cache_dir)
     model = transformers.AutoModelForCausalLM.from_pretrained(
         model_args.model_name_or_path,
@@ -263,42 +234,20 @@ def train():
     except:
         pass
 
-    is_falcon = 'falcon' in model_args.model_name_or_path
-    is_opt = 'opt' in model_args.model_name_or_path
-    is_mpt = 'mpt' in model_args.model_name_or_path
+    # NOTE: this is llama-specific
+    # For other models, replace this with proper variable names for model and layers
+    _model = model.model
+    _layers = _model.layers
 
-    if is_falcon:
-        _model = model.transformer
-        _layers = _model.h
-    elif is_opt:
-        _model = model.model.decoder
-        _layers = _model.layers
-    elif is_mpt:
-        _model = model.transformer
-        _layers = _model.blocks
-    else:
-        _model = model.model
-        _layers = _model.layers
-
+    # TODO TODO
     _model.split(2) # split into n+1 machines
     #model.cuda()  # use it for not splitting
 
     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
     
-
-    if is_falcon:
-        grads = [[0.] * 6 for _ in _layers]
-    elif is_opt:
-        grads = [[0.] * 6 for _ in _layers]
-    elif is_mpt:
-        grads = [[0.] * 6 for _ in _layers]
-    else:
-        grads = [[0.] * 7 for _ in _layers]
+    grads = [[0.] * NUM_LAYERS for _ in _layers]
 
     for i, data in tqdm(enumerate(dataloader[:100])):
-        #if i < 50:
-        #    continue
-        #import pdb; pdb.set_trace()
         if not run_vicuna:
             data = data[0]
         else:
@@ -309,19 +258,14 @@ def train():
         loss.backward()
 
         for i, layer in enumerate(_layers):
-            for j, module in enumerate(get_modules(layer, is_falcon, is_opt, is_mpt)):
+            for j, module in enumerate(get_modules(layer)):
                 grad = module.weight.grad
-                #print(i, j, grad.norm())
-                #import pdb; pdb.set_trace()
-                # For norm
-                #grads[i][j] += float((grad ** 2).mean())
                 grads[i][j] += (grad ** 2).float().cpu()
 
         optimizer.zero_grad()
-        #import pdb; pdb.set_trace()
 
     for i, layer in enumerate(_layers):
-        for j, module in enumerate(get_modules(layer, is_falcon, is_opt, is_mpt)):
+        for j, module in enumerate(get_modules(layer)):
             module.weight.data = grads[i][j]
 
     #tokenizer = transformers.AutoTokenizer.from_pretrained(
