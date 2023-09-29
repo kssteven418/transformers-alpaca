@@ -12,10 +12,6 @@ from transformers import Trainer
 from tqdm import tqdm
 import utils
 
-# NOTE: define number of layers in the model
-# for LLaMA, this is 7 for q, k, v, o, gate, up, and down
-NUM_LAYERS = 7
-
 IGNORE_INDEX = -100
 DEFAULT_PAD_TOKEN = "[PAD]"
 DEFAULT_EOS_TOKEN = "</s>"
@@ -225,10 +221,7 @@ def train():
         cache_dir=training_args.cache_dir,
         trust_remote_code=True,
     )
-    import pdb; pdb.set_trace()
-    #model = model.cuda().bfloat16()
     model = model.bfloat16()
-    #model = model.float()
     try:
         model.lm_head.cuda()
     except:
@@ -238,14 +231,11 @@ def train():
     # For other models, replace this with proper variable names for model and layers
     _model = model.model
     _layers = _model.layers
-
-    # TODO TODO
-    _model.split(2) # split into n+1 machines
-    #model.cuda()  # use it for not splitting
+    _model.set_devices()
 
     optimizer = optim.SGD(model.parameters(), lr=0.01, momentum=0.9)
     
-    grads = [[0.] * NUM_LAYERS for _ in _layers]
+    grads = [[0.] * _model.num_linear_layers for _ in _layers]
 
     for i, data in tqdm(enumerate(dataloader[:100])):
         if not run_vicuna:

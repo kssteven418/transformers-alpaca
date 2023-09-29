@@ -318,7 +318,7 @@ class Trainer:
         optimizers: Tuple[torch.optim.Optimizer, torch.optim.lr_scheduler.LambdaLR] = (None, None),
         preprocess_logits_for_metrics: Optional[Callable[[torch.Tensor, torch.Tensor], torch.Tensor]] = None,
     ):
-        self.gradients = np.zeros([len(model.model.layers), 7])
+        self.gradients = np.zeros([len(model.model.layers), model.model.num_linear_layers])
         self.all_gradients = []
         self.num_steps = 0
         if args is None:
